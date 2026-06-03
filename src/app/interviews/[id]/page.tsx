@@ -1,12 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
 import type { InterviewMessage, InterviewSession } from "@/lib/interviews";
-import type { ExtractedPatternInsert } from "@/lib/patterns";
 
 type InterviewPayload = {
   session?: InterviewSession;
@@ -16,29 +14,38 @@ type InterviewPayload = {
 
 type MessagePayload = {
   message?: InterviewMessage;
+  messages?: InterviewMessage[];
   error?: string;
 };
 
-type ExtractPayload = {
-  patterns?: ExtractedPatternInsert[];
-  error?: string;
-};
-
-type SavePatternsPayload = {
-  patterns?: ExtractedPatternInsert[];
+type CompletePayload = {
+  session?: InterviewSession;
+  message?: InterviewMessage;
   error?: string;
 };
 
 const roleLabel = (role: InterviewMessage["role"]) => {
   if (role === "ai") {
-    return "AIの質問";
+    return "AI相談者";
   }
 
   if (role === "expert") {
     return "私の回答";
   }
 
-  return "システム";
+  return "メモ";
+};
+
+const messageToneClass = (role: InterviewMessage["role"]) => {
+  if (role === "ai") {
+    return "border-blue-200 bg-blue-50";
+  }
+
+  if (role === "expert") {
+    return "border-emerald-200 bg-emerald-50";
+  }
+
+  return "border-amber-200 bg-amber-50";
 };
 
 const getParamId = (value: string | string[] | undefined): string =>
@@ -50,18 +57,16 @@ export default function InterviewPage() {
   const [session, setSession] = useState<InterviewSession | null>(null);
   const [messages, setMessages] = useState<InterviewMessage[]>([]);
   const [answer, setAnswer] = useState("");
-  const [patterns, setPatterns] = useState<ExtractedPatternInsert[]>([]);
+  const [isSelfLike, setIsSelfLike] = useState(false);
+  const [saveForLater, setSaveForLater] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState<
-    "save-answer" | "next-question" | "extract" | "save-patterns" | null
+    "save-answer" | "next-customer" | "complete" | null
   >(null);
-  const [savedPatternCount, setSavedPatternCount] = useState(0);
 
-  const hasExpertAnswer = useMemo(
-    () => messages.some((message) => message.role === "expert"),
-    [messages],
-  );
+  const isCompleted = session?.status === "completed";
 
   useEffect(() => {
     if (!sessionId) {
@@ -79,7 +84,7 @@ export default function InterviewPage() {
         const payload = (await response.json()) as InterviewPayload;
 
         if (!response.ok || !payload.session) {
-          throw new Error(payload.error ?? "セッションを取得できませんでした。");
+          throw new Error(payload.error ?? "ロールプレイを取得できませんでした。");
         }
 
         if (isActive) {
@@ -90,7 +95,7 @@ export default function InterviewPage() {
       } catch (requestError) {
         if (isActive && !abortController.signal.aborted) {
           setError(
-            requestError instanceof Error ? requestError.message : "セッション取得に失敗しました。",
+            requestError instanceof Error ? requestError.message : "ロールプレイ取得に失敗しました。",
           );
         }
       } finally {
@@ -118,6 +123,7 @@ export default function InterviewPage() {
 
     setPendingAction("save-answer");
     setError("");
+    setNotice("");
 
     try {
       const response = await fetch(`/api/interviews/${sessionId}/messages`, {
@@ -125,7 +131,11 @@ export default function InterviewPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({
+          content,
+          isSelfLike,
+          saveForLater,
+        }),
       });
       const payload = (await response.json()) as MessagePayload;
 
@@ -133,10 +143,11 @@ export default function InterviewPage() {
         throw new Error(payload.error ?? "回答を保存できませんでした。");
       }
 
-      setMessages((current) => [...current, payload.message as InterviewMessage]);
+      setMessages((current) => [...current, ...(payload.messages ?? [payload.message as InterviewMessage])]);
       setAnswer("");
-      setPatterns([]);
-      setSavedPatternCount(0);
+      setIsSelfLike(false);
+      setSaveForLater(false);
+      setNotice("回答を保存しました。必要なら「相談者の次の発言」で会話を続けてください。");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "回答保存に失敗しました。");
     } finally {
@@ -144,9 +155,10 @@ export default function InterviewPage() {
     }
   };
 
-  const createNextQuestion = async () => {
-    setPendingAction("next-question");
+  const createNextCustomerUtterance = async () => {
+    setPendingAction("next-customer");
     setError("");
+    setNotice("");
 
     try {
       const response = await fetch(`/api/interviews/${sessionId}/next-question`, {
@@ -155,71 +167,41 @@ export default function InterviewPage() {
       const payload = (await response.json()) as MessagePayload;
 
       if (!response.ok || !payload.message) {
-        throw new Error(payload.error ?? "次の質問を生成できませんでした。");
+        throw new Error(payload.error ?? "相談者の次の発言を生成できませんでした。");
       }
 
       setMessages((current) => [...current, payload.message as InterviewMessage]);
-      setPatterns([]);
-      setSavedPatternCount(0);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "質問生成に失敗しました。");
+      setError(
+        requestError instanceof Error ? requestError.message : "相談者の発言生成に失敗しました。",
+      );
     } finally {
       setPendingAction(null);
     }
   };
 
-  const extractPatterns = async () => {
-    setPendingAction("extract");
+  const completeRoleplay = async () => {
+    setPendingAction("complete");
     setError("");
-    setSavedPatternCount(0);
+    setNotice("");
 
     try {
-      const response = await fetch(`/api/interviews/${sessionId}/extract`, {
+      const response = await fetch(`/api/interviews/${sessionId}/complete`, {
         method: "POST",
       });
-      const payload = (await response.json()) as ExtractPayload;
+      const payload = (await response.json()) as CompletePayload;
 
-      if (!response.ok || !payload.patterns) {
-        throw new Error(payload.error ?? "構造化抽出に失敗しました。");
+      if (!response.ok || !payload.session) {
+        throw new Error(payload.error ?? "ロールプレイを終了できませんでした。");
       }
 
-      setPatterns(payload.patterns);
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "構造化抽出に失敗しました。");
-    } finally {
-      setPendingAction(null);
-    }
-  };
-
-  const savePatterns = async () => {
-    if (patterns.length === 0) {
-      setError("保存する抽出結果がありません。");
-      return;
-    }
-
-    setPendingAction("save-patterns");
-    setError("");
-
-    try {
-      const response = await fetch("/api/patterns", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          sessionId,
-          patterns,
-        }),
-      });
-      const payload = (await response.json()) as SavePatternsPayload;
-
-      if (!response.ok || !payload.patterns) {
-        throw new Error(payload.error ?? "パターンを保存できませんでした。");
+      setSession(payload.session);
+      if (payload.message) {
+        setMessages((current) => [...current, payload.message as InterviewMessage]);
       }
-
-      setSavedPatternCount(payload.patterns.length);
+      setNotice("このロールプレイを終了しました。");
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "パターン保存に失敗しました。");
+      setError(requestError instanceof Error ? requestError.message : "ロールプレイ終了に失敗しました。");
     } finally {
       setPendingAction(null);
     }
@@ -230,15 +212,27 @@ export default function InterviewPage() {
       <section className="grid gap-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="grid gap-2">
-            <p className="text-sm font-semibold text-zinc-500">インタビュー</p>
+            <p className="text-sm font-semibold text-zinc-500">ロールプレイ</p>
             <h1 className="text-2xl font-semibold">{session?.theme ?? "読み込み中..."}</h1>
             <p className="max-w-3xl text-sm leading-6 text-zinc-700">
-              AIは熟練者に質問します。相談者の個人情報や具体名は入力しないでください。
+              AI相談者の発言に、葬儀社の担当者として返答してください。あなたの言い回し、深掘り質問、確認順序、配慮表現をそのまま保存します。
             </p>
           </div>
-          <Link className="rounded border border-zinc-300 px-3 py-2 text-sm hover:bg-white" href="/patterns">
-            パターン一覧へ
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            {isCompleted ? (
+              <span className="rounded bg-zinc-200 px-3 py-2 text-sm font-semibold text-zinc-700">
+                終了済み
+              </span>
+            ) : null}
+            <button
+              className="rounded border border-zinc-300 px-3 py-2 text-sm font-semibold hover:bg-white disabled:cursor-not-allowed disabled:text-zinc-400"
+              type="button"
+              onClick={completeRoleplay}
+              disabled={isLoading || isCompleted || pendingAction !== null}
+            >
+              {pendingAction === "complete" ? "終了中..." : "この会話を終了"}
+            </button>
+          </div>
         </div>
 
         {error ? (
@@ -247,23 +241,28 @@ export default function InterviewPage() {
           </div>
         ) : null}
 
-        {savedPatternCount > 0 ? (
+        {notice ? (
           <div className="rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-            {savedPatternCount}件のパターンを保存しました。
+            {notice}
           </div>
         ) : null}
 
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
           <section className="grid gap-4 rounded border border-zinc-200 bg-white p-5 shadow-sm">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <h2 className="text-lg font-semibold">会話ログ</h2>
+              <div>
+                <h2 className="text-lg font-semibold">会話ログ</h2>
+                <p className="mt-1 text-sm text-zinc-600">
+                  AI相談者の発言と、あなたの担当者としての回答を時系列で保存します。
+                </p>
+              </div>
               <button
                 className="rounded bg-zinc-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-400"
                 type="button"
-                onClick={createNextQuestion}
-                disabled={isLoading || pendingAction !== null}
+                onClick={createNextCustomerUtterance}
+                disabled={isLoading || isCompleted || pendingAction !== null}
               >
-                {pendingAction === "next-question" ? "生成中..." : "次の質問"}
+                {pendingAction === "next-customer" ? "生成中..." : "相談者の次の発言"}
               </button>
             </div>
 
@@ -271,18 +270,14 @@ export default function InterviewPage() {
               <p className="text-sm text-zinc-600">読み込み中...</p>
             ) : messages.length === 0 ? (
               <div className="rounded border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-600">
-                まだ質問がありません。「次の質問」で最初の質問を生成してください。
+                まだ発言がありません。「相談者の次の発言」で最初の相談を生成できます。
               </div>
             ) : (
               <div className="grid gap-3">
                 {messages.map((message) => (
                   <article
                     key={message.id}
-                    className={`rounded border p-4 ${
-                      message.role === "ai"
-                        ? "border-blue-200 bg-blue-50"
-                        : "border-zinc-200 bg-zinc-50"
-                    }`}
+                    className={`rounded border p-4 ${messageToneClass(message.role)}`}
                   >
                     <div className="mb-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-zinc-500">
                       <span>{roleLabel(message.role)}</span>
@@ -299,117 +294,61 @@ export default function InterviewPage() {
 
           <aside className="grid content-start gap-4">
             <section className="grid gap-3 rounded border border-zinc-200 bg-white p-5 shadow-sm">
-              <h2 className="text-lg font-semibold">回答入力</h2>
+              <h2 className="text-lg font-semibold">私の回答</h2>
               <p className="text-sm leading-6 text-zinc-600">
-                実名、故人名、住所、電話番号などは入力しないでください。状況は匿名化・抽象化してください。
+                葬儀社の担当者として、実際の接客に近い言葉で返答してください。個人情報や具体名は入力しないでください。
               </p>
               <textarea
-                className="min-h-44 rounded border border-zinc-300 px-3 py-2 text-sm leading-7"
-                placeholder="熟練者としての判断順序、確認したい背景、言葉選びなどを入力"
+                className="min-h-48 rounded border border-zinc-300 px-3 py-2 text-sm leading-7"
+                placeholder="例: ご心配な点は費用だけでなく、ご親族からどう見られるかも含まれていそうですね..."
                 value={answer}
                 onChange={(event) => setAnswer(event.target.value)}
+                disabled={isCompleted}
               />
+
+              <div className="grid gap-2 rounded border border-zinc-200 bg-zinc-50 p-3">
+                <button
+                  className={`rounded border px-3 py-2 text-left text-sm font-semibold ${
+                    isSelfLike
+                      ? "border-emerald-400 bg-emerald-50 text-emerald-900"
+                      : "border-zinc-300 bg-white text-zinc-800"
+                  }`}
+                  type="button"
+                  onClick={() => setIsSelfLike((current) => !current)}
+                  disabled={isCompleted}
+                >
+                  この回答は自分らしい
+                </button>
+                <label className="flex items-center gap-2 text-sm font-medium text-zinc-800">
+                  <input
+                    className="h-4 w-4"
+                    type="checkbox"
+                    checked={saveForLater}
+                    onChange={(event) => setSaveForLater(event.target.checked)}
+                    disabled={isCompleted}
+                  />
+                  この回答は後で使いたい
+                </label>
+              </div>
+
               <button
                 className="rounded bg-zinc-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-400"
                 type="button"
                 onClick={saveAnswer}
-                disabled={pendingAction !== null || !answer.trim()}
+                disabled={isCompleted || pendingAction !== null || !answer.trim()}
               >
                 {pendingAction === "save-answer" ? "保存中..." : "回答を保存"}
               </button>
             </section>
 
-            <section className="grid gap-3 rounded border border-zinc-200 bg-white p-5 shadow-sm">
-              <h2 className="text-lg font-semibold">構造化抽出</h2>
-              <p className="text-sm leading-6 text-zinc-600">
-                会話ログから extracted_patterns に保存する候補JSONを生成します。保存前に内容を確認してください。
+            <section className="grid gap-2 rounded border border-zinc-200 bg-white p-5 text-sm leading-6 text-zinc-600 shadow-sm">
+              <h2 className="text-base font-semibold text-zinc-950">第一段階の目的</h2>
+              <p>
+                今は構造化抽出よりも、AI相談者との会話を続けて実際の回答データを大量に蓄積することを優先します。
               </p>
-              <button
-                className="rounded bg-zinc-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-400"
-                type="button"
-                onClick={extractPatterns}
-                disabled={pendingAction !== null || !hasExpertAnswer}
-              >
-                {pendingAction === "extract" ? "抽出中..." : "構造化抽出"}
-              </button>
-              <button
-                className="rounded border border-zinc-300 px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:text-zinc-400"
-                type="button"
-                onClick={savePatterns}
-                disabled={pendingAction !== null || patterns.length === 0}
-              >
-                {pendingAction === "save-patterns" ? "保存中..." : "パターン保存"}
-              </button>
             </section>
           </aside>
         </div>
-
-        {patterns.length > 0 ? (
-          <section className="grid gap-4 rounded border border-zinc-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <h2 className="text-lg font-semibold">抽出結果確認</h2>
-              <p className="text-sm text-zinc-600">{patterns.length}件の候補</p>
-            </div>
-            <div className="grid gap-3 md:grid-cols-2">
-              {patterns.map((pattern, index) => (
-                <article key={`${pattern.category}-${index}`} className="rounded border border-zinc-200 p-4">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <h3 className="font-semibold">候補 {index + 1}</h3>
-                    <span className="rounded bg-zinc-100 px-2 py-1 text-xs text-zinc-700">
-                      {pattern.category}
-                    </span>
-                  </div>
-                  <dl className="grid gap-3 text-sm">
-                    <div>
-                      <dt className="font-semibold text-zinc-500">相談者の言葉</dt>
-                      <dd className="mt-1 whitespace-pre-wrap">{pattern.customer_phrase ?? "未抽出"}</dd>
-                    </div>
-                    <div>
-                      <dt className="font-semibold text-zinc-500">隠れた不安</dt>
-                      <dd className="mt-1 whitespace-pre-wrap">{pattern.hidden_anxiety ?? "未抽出"}</dd>
-                    </div>
-                    <div>
-                      <dt className="font-semibold text-zinc-500">最初の質問</dt>
-                      <dd className="mt-1 whitespace-pre-wrap">{pattern.first_question ?? "未抽出"}</dd>
-                    </div>
-                    <div>
-                      <dt className="font-semibold text-zinc-500">深掘り質問</dt>
-                      <dd className="mt-1 whitespace-pre-wrap">
-                        {pattern.followup_questions?.length
-                          ? pattern.followup_questions.join("\n")
-                          : "未抽出"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="font-semibold text-zinc-500">判断ポイント</dt>
-                      <dd className="mt-1 whitespace-pre-wrap">
-                        {pattern.decision_points?.length ? pattern.decision_points.join("\n") : "未抽出"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="font-semibold text-zinc-500">言い回し例</dt>
-                      <dd className="mt-1 whitespace-pre-wrap">{pattern.talk_example ?? "未抽出"}</dd>
-                    </div>
-                    <div>
-                      <dt className="font-semibold text-zinc-500">NG表現</dt>
-                      <dd className="mt-1 whitespace-pre-wrap">
-                        {pattern.ng_phrases?.length ? pattern.ng_phrases.join("\n") : "未抽出"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="font-semibold text-zinc-500">次の行動</dt>
-                      <dd className="mt-1 whitespace-pre-wrap">{pattern.next_action ?? "未抽出"}</dd>
-                    </div>
-                    <div>
-                      <dt className="font-semibold text-zinc-500">信頼度</dt>
-                      <dd className="mt-1">{pattern.confidence_score ?? "未抽出"}</dd>
-                    </div>
-                  </dl>
-                </article>
-              ))}
-            </div>
-          </section>
-        ) : null}
       </section>
     </AppShell>
   );

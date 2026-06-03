@@ -22,13 +22,13 @@ export const AppShell = ({ children }: AppShellProps) => (
             className="rounded border border-zinc-300 px-3 py-2 hover:bg-zinc-50"
             href="/interviews/new"
           >
-            新規インタビュー
+            ロールプレイ開始
           </Link>
           <Link
             className="rounded border border-zinc-300 px-3 py-2 hover:bg-zinc-50"
             href="/patterns"
           >
-            パターン一覧
+            保存済みパターン
           </Link>
         </nav>
       </div>

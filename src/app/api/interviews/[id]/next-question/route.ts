@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { jsonError } from "@/lib/api/errors";
-import { createFollowupQuestionPrompt } from "@/lib/interviews";
 import { createOpenAIChatCompletion } from "@/lib/openai/chat";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { createInterviewerPrompt, INTERVIEWER_SYSTEM_PROMPT } from "@/prompts/interviewer";
+import {
+  createInitialCustomerPrompt,
+  createNextCustomerPrompt,
+  ROLEPLAY_CUSTOMER_SYSTEM_PROMPT,
+} from "@/prompts/roleplayCustomer";
 
 type RouteContext = {
   params: Promise<{
@@ -43,22 +46,22 @@ export const POST = async (_request: Request, context: RouteContext) => {
 
     const userPrompt =
       messages && messages.length > 0
-        ? createFollowupQuestionPrompt(session.theme, messages)
-        : createInterviewerPrompt(session.theme);
+        ? createNextCustomerPrompt(session.theme, messages)
+        : createInitialCustomerPrompt(session.theme);
 
-    const question = await createOpenAIChatCompletion({
+    const customerUtterance = await createOpenAIChatCompletion({
       messages: [
         {
           role: "system",
-          content: INTERVIEWER_SYSTEM_PROMPT,
+          content: ROLEPLAY_CUSTOMER_SYSTEM_PROMPT,
         },
         {
           role: "user",
           content: userPrompt,
         },
       ],
-      maxTokens: 500,
-      temperature: 0.5,
+      maxTokens: 420,
+      temperature: 0.7,
     });
 
     const { data: message, error: insertError } = await supabase
@@ -66,7 +69,7 @@ export const POST = async (_request: Request, context: RouteContext) => {
       .insert({
         session_id: id,
         role: "ai",
-        content: question,
+        content: customerUtterance,
       })
       .select("*")
       .single();

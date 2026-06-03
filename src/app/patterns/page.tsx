@@ -51,17 +51,17 @@ export default function PatternsPage() {
       <section className="grid gap-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="grid gap-2">
-            <p className="text-sm font-semibold text-zinc-500">保存済み</p>
-            <h1 className="text-2xl font-semibold">パターン一覧</h1>
+            <p className="text-sm font-semibold text-zinc-500">後工程</p>
+            <h1 className="text-2xl font-semibold">保存済みパターン</h1>
             <p className="max-w-3xl text-sm leading-6 text-zinc-700">
-              extracted_patterns に保存された判断軸、質問、言い回しを確認します。
+              構造化抽出は後工程です。第一段階ではロールプレイ会話ログの蓄積を優先します。
             </p>
           </div>
           <Link
             className="rounded bg-zinc-950 px-4 py-2 text-sm font-semibold text-white"
             href="/interviews/new"
           >
-            新規インタビュー
+            ロールプレイ開始
           </Link>
         </div>
 

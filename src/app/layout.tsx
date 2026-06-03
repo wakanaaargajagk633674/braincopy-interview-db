@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "脳内コピーインタビューDB",
-  description: "葬儀相談の熟練者へのインタビューを保存し、構造化パターンとして抽出する非公開ツール",
+  description: "AI相談者とのロールプレイで葬儀社担当者の回答ログを蓄積する非公開ツール",
 };
 
 export default function RootLayout({
